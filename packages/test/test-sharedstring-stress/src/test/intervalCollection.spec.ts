@@ -9,10 +9,17 @@ import {
     generatorFromArray,
     take,
 } from "@fluid-internal/stochastic-test-utils";
-import { LoggingInfo, Operation, runTests, makeOperationGenerator } from "./intervalCollectionFuzz";
+import {
+    LoggingInfo,
+    Operation,
+    runTests,
+    makeOperationGenerator,
+// eslint-disable-next-line import/no-internal-modules
+} from "@fluidframework/sequence/dist/test/intervalCollectionFuzz";
 
-const testCount = 10;
+const testCount = process.env.TEST_COUNT ?? 10;
 
+console.log(JSON.stringify(process.env));
 const directory = path.join(__dirname, "../../src/test/results");
 
 function getPath(seed: number): string {
