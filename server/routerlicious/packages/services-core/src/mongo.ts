@@ -46,6 +46,7 @@ export class MongoManager {
      */
     // eslint-disable-next-line @typescript-eslint/promise-function-async
     private connect(global = false): Promise<IDb> {
+        Lumberjack.info(`Xin Should reconnect: ${this.shouldReconnect}`);
         const databaseP = this.factory.connect(global)
             .then((db) => {
                 db.on("error", (error) => {

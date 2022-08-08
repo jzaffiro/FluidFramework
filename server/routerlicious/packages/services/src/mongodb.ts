@@ -217,6 +217,7 @@ export class MongoDbFactory implements core.IDbFactory {
         if (this.connectionPoolMaxSize) {
             options.poolSize = this.connectionPoolMaxSize;
         }
+        Lumberjack.info("Xin debug option", options);
 
         const connection = await MongoClient.connect(
             global ?
