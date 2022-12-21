@@ -1666,6 +1666,8 @@ export class MergeTree {
                 // if the seg len in undefined, the segment
                 // will be removed, so should just be skipped for now
                 continue;
+            } else {
+                assert(len >= 0, "Length should not be negative");
             }
 
             if ((_pos < len) || ((_pos === len) && this.breakTie(_pos, child, seq))) {
@@ -1974,6 +1976,8 @@ export class MergeTree {
 
                 const start = this.findRollbackPosition(segment);
                 if (op.type === MergeTreeDeltaType.INSERT) {
+                    segment.seq = UniversalSequenceNumber;
+                    segment.localSeq = undefined;
                     const removeOp = createRemoveRangeOp(start, start + segment.cachedLength);
                     this.markRangeRemoved(
                         start,
