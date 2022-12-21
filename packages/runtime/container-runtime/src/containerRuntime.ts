@@ -482,6 +482,17 @@ export interface IContainerRuntimeOptions {
      * @experimental This config should be driven by the connection with the service and will be moved in the future.
      */
     readonly maxBatchSizeInBytes?: number;
+
+    /**
+     * If the op payload needs to be chunked in order to work around the maximum size of the batch, this value represents
+     * how large the individual chunks will be. This is only supported when compression is enabled.
+     *
+     * If unspecified, if a batch exceeds `maxBatchSizeInBytes` after compression, the container will close with an instance
+     * of `GenericError` with the `BatchTooLarge` message.
+     *
+     * @experimental Not ready for use.
+     */
+    readonly chunkSizeInBytes?: number;
 }
 
 /**
@@ -662,6 +673,7 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
                 compressionAlgorithm: CompressionAlgorithms.lz4
             },
             maxBatchSizeInBytes = defaultMaxBatchSizeInBytes,
+            chunkSizeInBytes = Number.POSITIVE_INFINITY,
         } = runtimeOptions;
 
         const pendingRuntimeState = context.pendingLocalState as IPendingRuntimeState | undefined;
@@ -739,6 +751,7 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
                 enableOfflineLoad,
                 compressionOptions,
                 maxBatchSizeInBytes,
+                chunkSizeInBytes,
             },
             containerScope,
             logger,
@@ -1010,12 +1023,18 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
         this.messageAtLastSummary = metadata?.message;
 
         this._connected = this.context.connected;
-        this.remoteMessageProcessor = new RemoteMessageProcessor(new OpSplitter(chunks), new OpDecompressor());
+
+        this.mc = loggerToMonitoringContext(ChildLogger.create(this.logger, "ContainerRuntime"));
+
+        const opSplitter = new OpSplitter(
+            chunks,
+            this.context.submitBatchFn,
+            runtimeOptions.chunkSizeInBytes,
+            runtimeOptions.maxBatchSizeInBytes,
+            this.mc.logger);
+        this.remoteMessageProcessor = new RemoteMessageProcessor(opSplitter, new OpDecompressor());
 
         this.handleContext = new ContainerFluidHandleContext("", this);
-
-        this.mc = loggerToMonitoringContext(
-            ChildLogger.create(this.logger, "ContainerRuntime"));
 
         if (this.summaryConfiguration.state === "enabled") {
             this.validateSummaryHeuristicConfiguration(this.summaryConfiguration);
@@ -1152,6 +1171,7 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
             pendingStateManager: this.pendingStateManager,
             containerContext: this.context,
             compressor: new OpCompressor(this.mc.logger),
+            splitter: opSplitter,
             config: {
                 compressionOptions: runtimeOptions.compressionOptions,
                 maxBatchSizeInBytes: runtimeOptions.maxBatchSizeInBytes,
@@ -1638,7 +1658,6 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
             if (!this.shouldContinueReconnecting()) {
                 this.closeFn(
                     DataProcessingError.create(
-                        // eslint-disable-next-line max-len
                         "Runtime detected too many reconnects with no progress syncing local ops. Batch of ops is likely too large (over 1Mb)",
                         "setConnectionState",
                         undefined,
@@ -1685,7 +1704,7 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
 
         try {
             let localOpMetadata: unknown;
-            if (local && runtimeMessage) {
+            if (local && runtimeMessage && message.type !== ContainerMessageType.ChunkedOp) {
                 localOpMetadata = this.pendingStateManager.processPendingLocalMessage(message);
             }
 
@@ -2316,7 +2335,6 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
                 if (this.deltaManager.lastSequenceNumber !== summaryRefSeqNum) {
                     return {
                         continue: false,
-                        // eslint-disable-next-line max-len
                         error: `lastSequenceNumber changed before uploading to storage. ${this.deltaManager.lastSequenceNumber} !== ${summaryRefSeqNum}`,
                     };
                 }
@@ -2326,7 +2344,6 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
                 if (lastAck !== this.summaryCollection.latestAck) {
                     return {
                         continue: false,
-                        // eslint-disable-next-line max-len
                         error: `Last summary changed while summarizing. ${this.summaryCollection.latestAck} !== ${lastAck}`,
                     };
                 }
@@ -2588,7 +2605,6 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
             } else if (!this.flushMicroTaskExists) {
                 this.flushMicroTaskExists = true;
                 // Queue a microtask to detect the end of the turn and force a flush.
-                // eslint-disable-next-line @typescript-eslint/no-floating-promises
                 Promise.resolve().then(() => {
                     this.flushMicroTaskExists = false;
                     this.flush();

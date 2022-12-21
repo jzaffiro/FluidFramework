@@ -25,6 +25,7 @@ import {
     ISummarizeResult,
     ITelemetryContext,
     IGarbageCollectionNodeData,
+    IGarbageCollectionSummaryDetailsLegacy,
     ISummaryTreeWithStats,
 } from "@fluidframework/runtime-definitions";
 import {
@@ -665,7 +666,7 @@ export class GarbageCollector implements IGarbageCollector {
                         continue;
                     }
 
-                    const gcSummaryDetails = await readAndParseBlob<IGarbageCollectionDetailsBase>(blobId);
+                    const gcSummaryDetails = await readAndParseBlob<IGarbageCollectionSummaryDetailsLegacy>(blobId);
                     // If there are no nodes for this data store, skip it.
                     if (gcSummaryDetails.gcData?.gcNodes === undefined) {
                         continue;
@@ -782,18 +783,7 @@ export class GarbageCollector implements IGarbageCollector {
             // each node in the summary.
             const usedRoutes = runGarbageCollection(gcNodes, ["/"]).referencedNodeIds;
 
-            const baseGCDetailsMap = unpackChildNodesGCDetails({ gcData: { gcNodes }, usedRoutes });
-            // Currently, the nodes may write the GC data. So, we need to update its base GC details with the
-            // unreferenced timestamp. Once we start writing the GC data here, we won't need to do this anymore.
-            for (const [nodeId, nodeData] of Object.entries(baseSnapshotData.gcState.gcNodes)) {
-                if (nodeData.unreferencedTimestampMs !== undefined) {
-                    const dataStoreGCDetails = baseGCDetailsMap.get(nodeId.slice(1));
-                    if (dataStoreGCDetails !== undefined) {
-                        dataStoreGCDetails.unrefTimestamp = nodeData.unreferencedTimestampMs;
-                    }
-                }
-            }
-            return baseGCDetailsMap;
+            return unpackChildNodesGCDetails({ gcData: { gcNodes }, usedRoutes });
         });
 
         // Log all the GC options and the state determined by the garbage collector. This is interesting only for the
@@ -1535,12 +1525,20 @@ export class GarbageCollector implements IGarbageCollector {
             // Events generated:
             // InactiveObject_Loaded, SweepReadyObject_Loaded
             if (usageType === "Loaded") {
-                this.mc.logger.sendErrorEvent({
+                const event = {
                     ...propsToLog,
                     eventName: `${state}Object_${usageType}`,
                     pkg: packagePathToTelemetryProperty(packagePath),
                     stack: generateStack(),
-                });
+                };
+
+                // Do not log the inactive object x events as error events as they are not the best signal for
+                // detecting something wrong with GC either from the partner or from the runtime itself.
+                if (state === UnreferencedState.Inactive) {
+                    this.mc.logger.sendTelemetryEvent(event);
+                } else {
+                    this.mc.logger.sendErrorEvent(event);
+                }
             }
 
             // If SweepReady Usage Detection is enabed, the handler may close the interactive container.
@@ -1571,12 +1569,19 @@ export class GarbageCollector implements IGarbageCollector {
             if ((usageType === "Revived") === active) {
                 const pkg = await this.getNodePackagePath(eventProps.id);
                 const fromPkg = eventProps.fromId ? await this.getNodePackagePath(eventProps.fromId) : undefined;
-                logger.sendErrorEvent({
+
+                const event = {
                     ...propsToLog,
                     eventName: `${state}Object_${usageType}`,
                     pkg: pkg ? { value: pkg.join("/"), tag: TelemetryDataTag.CodeArtifact } : undefined,
                     fromPkg: fromPkg ? { value: fromPkg.join("/"), tag: TelemetryDataTag.CodeArtifact } : undefined,
-                });
+                }
+
+                if (state === UnreferencedState.Inactive) {
+                    logger.sendTelemetryEvent(event);
+                } else {
+                    logger.sendErrorEvent(event);
+                }
             }
         }
         this.pendingEventsQueue = [];
