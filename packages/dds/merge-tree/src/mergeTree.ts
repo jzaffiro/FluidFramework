@@ -342,6 +342,47 @@ function extendIfUndefined<T>(base: MapLike<T>, extension: MapLike<T> | undefine
     }
     return base;
 }
+
+export function zamboniSegments(mergeTree: MergeTree, zamboniSegmentsMaxCount = MergeTree.zamboniSegmentsMaxCount) {
+    if (!mergeTree.collabWindow.collaborating) {
+        return;
+    }
+
+    for (let i = 0; i < zamboniSegmentsMaxCount; i++) {
+        let segmentToScour = mergeTree.segmentsToScour!.peek();
+        if (!segmentToScour || segmentToScour.maxSeq > mergeTree.collabWindow.minSeq) {
+            break;
+        }
+        segmentToScour = mergeTree.segmentsToScour!.get();
+        // Only skip scouring if needs scour is explicitly false, not true or undefined
+        if (segmentToScour.segment!.parent && segmentToScour.segment!.parent.needsScour !== false) {
+            const block = segmentToScour.segment!.parent;
+            const childrenCopy: IMergeNode[] = [];
+            mergeTree.scourNode(block, childrenCopy);
+            // This will avoid the cost of re-scouring nodes
+            // that have recently been scoured
+            block.needsScour = false;
+
+            const newChildCount = childrenCopy.length;
+
+            if (newChildCount < block.childCount) {
+                block.childCount = newChildCount;
+                block.children = childrenCopy;
+                for (let j = 0; j < newChildCount; j++) {
+                    block.assignChild(childrenCopy[j], j, false);
+                }
+
+                if (mergeTree.underflow(block) && block.parent) {
+                    mergeTree.packParent(block.parent);
+                } else {
+                    mergeTree.nodeUpdateOrdinals(block);
+                    mergeTree.blockUpdatePathLengths(block, UnassignedSequenceNumber, -1, true);
+                }
+            }
+        }
+    }
+}
+
 class HierMergeBlock extends MergeBlock implements IHierBlock {
     public rightmostTiles: MapLike<ReferencePosition>;
     public leftmostTiles: MapLike<ReferencePosition>;
@@ -463,7 +504,7 @@ export interface IRootMergeBlock extends IMergeBlock {
  * @internal
  */
 export class MergeTree {
-    private static readonly zamboniSegmentsMaxCount = 2;
+    static readonly zamboniSegmentsMaxCount = 2;
     public static readonly options = {
         incrementalUpdate: true,
         insertAfterRemovedSegs: true,
@@ -477,7 +518,7 @@ export class MergeTree {
     public readonly collabWindow = new CollaborationWindow();
 
     public pendingSegments: List<SegmentGroup> | undefined;
-    private segmentsToScour: Heap<LRUSegment> | undefined;
+    public segmentsToScour: Heap<LRUSegment> | undefined;
     /**
      * Whether or not all blocks in the mergeTree currently have information about local partial lengths computed.
      * This information is only necessary on reconnect, and otherwise costly to bookkeep.
@@ -674,11 +715,11 @@ export class MergeTree {
         }
     }
 
-    private underflow(node: IMergeBlock) {
+    public underflow(node: IMergeBlock) {
         return node.childCount < (MaxNodesInBlock / 2);
     }
 
-    private scourNode(node: IMergeBlock, holdNodes: IMergeNode[]) {
+    public scourNode(node: IMergeBlock, holdNodes: IMergeNode[]) {
         let prevSegment: ISegment | undefined;
         for (let k = 0; k < node.childCount; k++) {
             const childNode = node.children[k];
@@ -747,7 +788,7 @@ export class MergeTree {
     }
 
     // Interior node with all node children
-    private packParent(parent: IMergeBlock) {
+    public packParent(parent: IMergeBlock) {
         const children = parent.children;
         let childIndex: number;
         let childBlock: IMergeBlock;
@@ -759,81 +800,46 @@ export class MergeTree {
             // Will replace this block with a packed block
             childBlock.parent = undefined;
         }
-        const totalNodeCount = holdNodes.length;
-        const halfOfMaxNodeCount = MaxNodesInBlock / 2;
-        let childCount = Math.min(MaxNodesInBlock - 1, Math.floor(totalNodeCount / halfOfMaxNodeCount));
-        if (childCount < 1) {
-            childCount = 1;
-        }
-        const baseNodesInBlockCount = Math.floor(totalNodeCount / childCount);
-        let remainderCount = totalNodeCount % childCount;
-        const packedBlocks = new Array<IMergeBlock>(MaxNodesInBlock);
-        let childrenPackedCount = 0;
-        for (let nodeIndex = 0; nodeIndex < childCount; nodeIndex++) {
-            let nodeCount = baseNodesInBlockCount;
-            if (remainderCount > 0) {
-                nodeCount++;
-                remainderCount--;
+        if (holdNodes.length > 0) {
+            const totalNodeCount = holdNodes.length;
+            const halfOfMaxNodeCount = MaxNodesInBlock / 2;
+            let childCount = Math.min(MaxNodesInBlock - 1, Math.floor(totalNodeCount / halfOfMaxNodeCount));
+            if (childCount < 1) {
+                childCount = 1;
             }
-            const packedBlock = this.makeBlock(nodeCount);
-            for (let packedNodeIndex = 0; packedNodeIndex < nodeCount; packedNodeIndex++) {
-                const nodeToPack = holdNodes[childrenPackedCount++];
-                packedBlock.assignChild(nodeToPack, packedNodeIndex, false);
+            const baseNodesInBlockCount = Math.floor(totalNodeCount / childCount);
+            let remainderCount = totalNodeCount % childCount;
+            const packedBlocks = new Array<IMergeBlock>(MaxNodesInBlock);
+            let childrenPackedCount = 0;
+            for (let nodeIndex = 0; nodeIndex < childCount; nodeIndex++) {
+                let nodeCount = baseNodesInBlockCount;
+                if (remainderCount > 0) {
+                    nodeCount++;
+                    remainderCount--;
+                }
+                const packedBlock = this.makeBlock(nodeCount);
+                for (let packedNodeIndex = 0; packedNodeIndex < nodeCount; packedNodeIndex++) {
+                    const nodeToPack = holdNodes[childrenPackedCount++];
+                    packedBlock.assignChild(nodeToPack, packedNodeIndex, false);
+                }
+                packedBlock.parent = parent;
+                packedBlocks[nodeIndex] = packedBlock;
+                this.nodeUpdateLengthNewStructure(packedBlock);
             }
-            packedBlock.parent = parent;
-            packedBlocks[nodeIndex] = packedBlock;
-            this.nodeUpdateLengthNewStructure(packedBlock);
+            parent.children = packedBlocks;
+            for (let j = 0; j < childCount; j++) {
+                parent.assignChild(packedBlocks[j], j, false);
+            }
+            parent.childCount = childCount;
+        } else {
+            parent.children = [];
+            parent.childCount = 0;
         }
-        parent.children = packedBlocks;
-        for (let j = 0; j < childCount; j++) {
-            parent.assignChild(packedBlocks[j], j, false);
-        }
-        parent.childCount = childCount;
         if (this.underflow(parent) && (parent.parent)) {
             this.packParent(parent.parent);
         } else {
             this.nodeUpdateOrdinals(parent);
             this.blockUpdatePathLengths(parent, UnassignedSequenceNumber, -1, true);
-        }
-    }
-
-    private zamboniSegments(zamboniSegmentsMaxCount = MergeTree.zamboniSegmentsMaxCount) {
-        if (!this.collabWindow.collaborating) {
-            return;
-        }
-
-        for (let i = 0; i < zamboniSegmentsMaxCount; i++) {
-            let segmentToScour = this.segmentsToScour!.peek();
-            if (!segmentToScour || segmentToScour.maxSeq > this.collabWindow.minSeq) {
-                break;
-            }
-            segmentToScour = this.segmentsToScour!.get();
-            // Only skip scouring if needs scour is explicitly false, not true or undefined
-            if (segmentToScour.segment!.parent && segmentToScour.segment!.parent.needsScour !== false) {
-                const block = segmentToScour.segment!.parent;
-                const childrenCopy: IMergeNode[] = [];
-                this.scourNode(block, childrenCopy);
-                // This will avoid the cost of re-scouring nodes
-                // that have recently been scoured
-                block.needsScour = false;
-
-                const newChildCount = childrenCopy.length;
-
-                if (newChildCount < block.childCount) {
-                    block.childCount = newChildCount;
-                    block.children = childrenCopy;
-                    for (let j = 0; j < newChildCount; j++) {
-                        block.assignChild(childrenCopy[j], j, false);
-                    }
-
-                    if (this.underflow(block) && block.parent) {
-                        this.packParent(block.parent);
-                    } else {
-                        this.nodeUpdateOrdinals(block);
-                        this.blockUpdatePathLengths(block, UnassignedSequenceNumber, -1, true);
-                    }
-                }
-            }
         }
     }
 
@@ -1086,7 +1092,7 @@ export class MergeTree {
         if (minSeq > this.collabWindow.minSeq) {
             this.collabWindow.minSeq = minSeq;
             if (MergeTree.options.zamboniSegments) {
-                this.zamboniSegments();
+                zamboniSegments(this);
             }
             this.notifyMinSeqListeners();
         }
@@ -1326,7 +1332,7 @@ export class MergeTree {
             }
         }
         if (MergeTree.options.zamboniSegments) {
-            this.zamboniSegments();
+            zamboniSegments(this);
         }
     }
 
@@ -1417,7 +1423,7 @@ export class MergeTree {
 
         if (this.collabWindow.collaborating && MergeTree.options.zamboniSegments &&
             (seq !== UnassignedSequenceNumber)) {
-            this.zamboniSegments();
+            zamboniSegments(this);
         }
     }
 
@@ -1839,7 +1845,7 @@ export class MergeTree {
         return newNode;
     }
 
-    private nodeUpdateOrdinals(block: IMergeBlock) {
+    public nodeUpdateOrdinals(block: IMergeBlock) {
         for (let i = 0; i < block.childCount; i++) {
             const child = block.children[i];
             block.setOrdinal(child, i);
@@ -1900,7 +1906,7 @@ export class MergeTree {
         }
         if (this.collabWindow.collaborating && (seq !== UnassignedSequenceNumber)) {
             if (MergeTree.options.zamboniSegments) {
-                this.zamboniSegments();
+                zamboniSegments(this);
             }
         }
     }
@@ -1994,7 +2000,7 @@ export class MergeTree {
 
         if (this.collabWindow.collaborating && (seq !== UnassignedSequenceNumber)) {
             if (MergeTree.options.zamboniSegments) {
-                this.zamboniSegments();
+                zamboniSegments(this);
             }
         }
     }
@@ -2168,7 +2174,7 @@ export class MergeTree {
         block.cachedLength = len;
     }
 
-    private blockUpdatePathLengths(
+    public blockUpdatePathLengths(
         startBlock: IMergeBlock | undefined,
         seq: number,
         clientId: number,
