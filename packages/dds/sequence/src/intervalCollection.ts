@@ -632,7 +632,6 @@ export interface IIntervalCollection<TInterval extends ISerializableInterval>
 	 * Creates a new interval and add it to the collection.
 	 * @param start - interval start position (inclusive)
 	 * @param end - interval end position (exclusive)
-	 * @param intervalType - type of the interval. All intervals are SlideOnRemove. Intervals may not be Transient.
 	 * @param props - properties of the interval
 	 * @param stickiness - {@link (IntervalStickiness:type)} to apply to the added interval.
 	 * @returns - the created interval
@@ -642,7 +641,6 @@ export interface IIntervalCollection<TInterval extends ISerializableInterval>
 	add(
 		start: number,
 		end: number,
-		intervalType: IntervalType,
 		props?: PropertySet,
 		stickiness?: IntervalStickiness,
 	): TInterval;
@@ -970,15 +968,11 @@ export class IntervalCollection<TInterval extends ISerializableInterval>
 	public add(
 		start: number,
 		end: number,
-		intervalType: IntervalType,
 		props?: PropertySet,
 		stickiness: IntervalStickiness = IntervalStickiness.END,
 	): TInterval {
 		if (!this.localCollection) {
 			throw new LoggingError("attach must be called prior to adding intervals");
-		}
-		if (intervalType & IntervalType.Transient) {
-			throw new LoggingError("Can not add transient intervals");
 		}
 		if (stickiness !== IntervalStickiness.END && !this.options.intervalStickinessEnabled) {
 			throw new UsageError(
@@ -989,7 +983,7 @@ export class IntervalCollection<TInterval extends ISerializableInterval>
 		const interval: TInterval = this.localCollection.addInterval(
 			start,
 			end,
-			intervalType,
+			IntervalType.SlideOnRemove,
 			props,
 			undefined,
 			stickiness,
@@ -998,7 +992,7 @@ export class IntervalCollection<TInterval extends ISerializableInterval>
 		if (interval) {
 			const serializedInterval = {
 				end,
-				intervalType,
+				intervalType: IntervalType.SlideOnRemove,
 				properties: interval.properties,
 				sequenceNumber: this.client?.getCurrentSeq() ?? 0,
 				start,
