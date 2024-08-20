@@ -187,6 +187,15 @@ export interface IMergeTreeOptions {
 	 * Default value: false
 	 */
 	mergeTreeEnableObliterate?: boolean;
+
+	/**
+	 * Determines whether to use the optimized implementation of obliterate with
+	 * endpoint expansion or the "slow" implementation that walks all of the tree nodes
+	 * to do the obliterate.
+	 *
+	 * Default value: true
+	 */
+	mergeTreeOptimizedObliterate?: boolean;
 }
 
 /**
@@ -498,24 +507,18 @@ export class MergeTree {
 		if (localSeq === undefined) {
 			if (removalInfo !== undefined || moveInfo !== undefined) {
 				if (
-					(!!removalInfo && seqLTE(removalInfo.removedSeq, this.collabWindow.minSeq)) ||
-					(!!moveInfo && seqLTE(moveInfo.movedSeq, this.collabWindow.minSeq))
+					(!!removalInfo && !seqLTE(removalInfo.removedSeq, this.collabWindow.minSeq)) ||
+					(!!moveInfo && !seqLTE(moveInfo.movedSeq, this.collabWindow.minSeq))
 				) {
-					// this segment removed and outside the collab window which means it is zamboni eligible
-					// this also means the segment could not exist, so we should not consider it
-					// when making decisions about conflict resolutions
-					return undefined;
-				}
-				if (
-					refSeq === undefined ||
-					(!!removalInfo && seqLTE(removalInfo.removedSeq, refSeq)) ||
-					(!!moveInfo && seqLTE(moveInfo.movedSeq, refSeq))
-				) {
-					// this segment is removed or moved and the removal/move is before the refSeq
 					return 0;
 				}
+				// this segment removed and outside the collab window which means it is zamboni eligible
+				// this also means the segment could not exist, so we should not consider it
+				// when making decisions about conflict resolutions
+				return undefined;
+			} else {
+				return segment.cachedLength;
 			}
-			return segment.cachedLength;
 		}
 
 		assert(
@@ -1452,7 +1455,6 @@ export class MergeTree {
 			_pos: number,
 			context: InsertContext,
 			// Keeping this function within the scope of blockInsert for readability.
-			// eslint-disable-next-line unicorn/consistent-function-scoping
 		): ISegmentChanges => {
 			const segmentChanges: ISegmentChanges = {};
 			if (segment) {
@@ -1535,81 +1537,175 @@ export class MergeTree {
 					continue;
 				}
 
-				if (
-					// _localMovedSeq !== undefined || _movedSeq !== undefined
-					(prevSegment !== undefined &&
-						((prevSegment.movedRangeExpansion ?? 0) & RangeExpansion.Far) !== 0) ||
-					(nextSegment !== undefined &&
-						((nextSegment.movedRangeExpansion ?? 0) & RangeExpansion.Near) !== 0)
-				) {
-					const movedClientIds = [
-						...(prevSegment?.movedClientIds !== undefined &&
-						((prevSegment.movedRangeExpansion ?? 0) & RangeExpansion.Far) !== 0
-							? prevSegment.movedClientIds
-							: []),
-						...(nextSegment?.movedClientIds !== undefined &&
-						((nextSegment.movedRangeExpansion ?? 0) & RangeExpansion.Near) !== 0
-							? nextSegment.movedClientIds
-							: []),
-					];
-					const movedSeqs = [
-						...(prevSegment?.movedSeqs !== undefined &&
-						((prevSegment.movedRangeExpansion ?? 0) & RangeExpansion.Far) !== 0
-							? prevSegment.movedSeqs
-							: []),
-						...(nextSegment?.movedSeqs !== undefined &&
-						((nextSegment.movedRangeExpansion ?? 0) & RangeExpansion.Near) !== 0
-							? nextSegment.movedSeqs
-							: []),
-					];
-					const movedSeq = Math.min(
-						prevSegment !== undefined &&
-							((prevSegment.movedRangeExpansion ?? 0) & RangeExpansion.Far) !== 0
-							? prevSegment.movedSeq ?? UnassignedSequenceNumber
-							: Number.POSITIVE_INFINITY,
-						nextSegment !== undefined &&
-							((nextSegment.movedRangeExpansion ?? 0) & RangeExpansion.Near) !== 0
-							? nextSegment.movedSeq ?? UnassignedSequenceNumber
-							: Number.POSITIVE_INFINITY,
-					);
-					const localMovedSeq =
+				if (this.options?.mergeTreeOptimizedObliterate) {
+					if (
 						(prevSegment !== undefined &&
-						((prevSegment.movedRangeExpansion ?? 0) & RangeExpansion.Far) !== 0
-							? prevSegment.localMovedSeq
-							: undefined) ??
+							((prevSegment.movedRangeExpansion ?? 0) & RangeExpansion.Far) !== 0) ||
 						(nextSegment !== undefined &&
-						((nextSegment.movedRangeExpansion ?? 0) & RangeExpansion.Near) !== 0
-							? nextSegment.localMovedSeq
-							: undefined);
-					const movedRangeExpansion =
-						// The far bit of the previous segment
-						((prevSegment?.movedRangeExpansion ?? RangeExpansion.None) & RangeExpansion.Far) |
-						// The near bit of the next segment
-						((nextSegment?.movedRangeExpansion ?? RangeExpansion.None) & RangeExpansion.Near);
-					const moveInfo: IMoveInfo = {
-						movedClientIds,
-						movedSeq,
-						movedRangeExpansion,
-						movedSeqs,
-						localMovedSeq,
-						wasMovedOnInsert: (movedSeq ?? -1) !== UnassignedSequenceNumber,
-					};
-
-					markSegmentMoved(newSegment, moveInfo);
-
-					if (moveInfo.localMovedSeq !== undefined) {
-						const movedSegmentGroup = this.locallyMovedSegments.get(moveInfo.localMovedSeq);
-
-						assert(
-							movedSegmentGroup !== undefined,
-							0x86c /* expected segment group to exist */,
+							((nextSegment.movedRangeExpansion ?? 0) & RangeExpansion.Near) !== 0)
+					) {
+						const movedClientIds = [
+							...(prevSegment?.movedClientIds !== undefined &&
+							((prevSegment.movedRangeExpansion ?? 0) & RangeExpansion.Far) !== 0
+								? prevSegment.movedClientIds
+								: []),
+							...(nextSegment?.movedClientIds !== undefined &&
+							((nextSegment.movedRangeExpansion ?? 0) & RangeExpansion.Near) !== 0
+								? nextSegment.movedClientIds
+								: []),
+						];
+						const movedSeqs = [
+							...(prevSegment?.movedSeqs !== undefined &&
+							((prevSegment.movedRangeExpansion ?? 0) & RangeExpansion.Far) !== 0
+								? prevSegment.movedSeqs
+								: []),
+							...(nextSegment?.movedSeqs !== undefined &&
+							((nextSegment.movedRangeExpansion ?? 0) & RangeExpansion.Near) !== 0
+								? nextSegment.movedSeqs
+								: []),
+						];
+						const movedSeq = Math.min(
+							prevSegment !== undefined &&
+								((prevSegment.movedRangeExpansion ?? 0) & RangeExpansion.Far) !== 0
+								? prevSegment.movedSeq ?? UnassignedSequenceNumber
+								: Number.POSITIVE_INFINITY,
+							nextSegment !== undefined &&
+								((nextSegment.movedRangeExpansion ?? 0) & RangeExpansion.Near) !== 0
+								? nextSegment.movedSeq ?? UnassignedSequenceNumber
+								: Number.POSITIVE_INFINITY,
 						);
-
-						this.addToPendingList(newSegment, movedSegmentGroup, localSeq);
+						const localMovedSeq =
+							(prevSegment !== undefined &&
+							((prevSegment.movedRangeExpansion ?? 0) & RangeExpansion.Far) !== 0
+								? prevSegment.localMovedSeq
+								: undefined) ??
+							(nextSegment !== undefined &&
+							((nextSegment.movedRangeExpansion ?? 0) & RangeExpansion.Near) !== 0
+								? nextSegment.localMovedSeq
+								: undefined);
+						const movedRangeExpansion =
+							// The far bit of the previous segment
+							((prevSegment?.movedRangeExpansion ?? RangeExpansion.None) &
+								RangeExpansion.Far) |
+							// The near bit of the next segment
+							((nextSegment?.movedRangeExpansion ?? RangeExpansion.None) &
+								RangeExpansion.Near);
+						const moveInfo: IMoveInfo = {
+							movedClientIds,
+							movedSeq,
+							movedRangeExpansion,
+							movedSeqs,
+							localMovedSeq,
+							wasMovedOnInsert: (movedSeq ?? -1) !== UnassignedSequenceNumber,
+						};
+						markSegmentMoved(newSegment, moveInfo);
+						if (moveInfo.localMovedSeq !== undefined) {
+							const movedSegmentGroup = this.locallyMovedSegments.get(moveInfo.localMovedSeq);
+							assert(
+								movedSegmentGroup !== undefined,
+								0x86c /* expected segment group to exist */,
+							);
+							this.addToPendingList(newSegment, movedSegmentGroup, localSeq);
+						}
+						if (newSegment.parent) {
+							this.blockUpdatePathLengths(newSegment.parent, seq, clientId);
+						}
 					}
+				} else {
+					/**
+					 * slow implementation of obliterate with endpoint expansion
+					 */
+					prevSegment = undefined;
+					let ranges: number[] = [];
+					let localRanges: number[] = [];
+					let nearNeighbor: ISegment | undefined;
+					let farNeighbor: ISegment | undefined;
+					// document loop invariants - things that should be true at the start of each iteration
+					walkAllChildSegments(this.root, (seg) => {
+						if (seg.movedSeqs !== undefined) {
+							const newMovedSeqs = seg.movedSeqs.filter(
+								(seqNum) => !ranges.includes(seqNum) && seqNum !== UnassignedSequenceNumber,
+							);
+							ranges.push(...newMovedSeqs);
+						}
+						if (seg.localMovedSeq !== undefined && !localRanges.includes(seg.localMovedSeq)) {
+							localRanges.push(seg.localMovedSeq);
+						}
 
-					if (newSegment.parent) {
-						this.blockUpdatePathLengths(newSegment.parent, seq, clientId);
+						if (nearNeighbor !== undefined) {
+							farNeighbor = seg;
+							return LeafAction.Exit;
+						}
+						if (seg === newSegment) {
+							nearNeighbor = prevSegment;
+						}
+						/**
+						 * when checking for continuous obliterate ranges, need to check if segment has length \> 0 at seq before obliterate seq
+						 * also need to check if the segment has been removed or moved before the obliterate seq, then it wont be included in walk
+						 */
+
+						for (const targetSeq of ranges) {
+							if (
+								seg !== newSegment &&
+								prevSegment !== newSegment &&
+								!seg.movedSeqs?.includes(targetSeq)
+							) {
+								ranges = ranges.filter((seqNum) => seqNum !== targetSeq);
+							}
+						}
+						for (const targetLocalSeq of localRanges) {
+							if (
+								seg !== newSegment &&
+								prevSegment !== newSegment &&
+								seg.localMovedSeq !== undefined
+							) {
+								// have hit the end of the range with start at targetLocalSeq
+								localRanges = localRanges.filter(
+									(seqNum) => seqNum !== targetLocalSeq,
+								);
+							}
+						}
+						prevSegment = seg;
+					});
+
+					if (nearNeighbor?.movedSeq !== undefined || farNeighbor?.movedSeq !== undefined) {
+						// Look on both sides of the new segment to determine the expansion
+						const movedRangeExpansion =
+							// The far bit of the previous segment
+							((nearNeighbor?.movedRangeExpansion ?? RangeExpansion.None) &
+								RangeExpansion.Far) |
+							// The near bit of the next segment
+							((farNeighbor?.movedRangeExpansion ?? RangeExpansion.None) &
+								RangeExpansion.Near);
+						const moveInfo: IMoveInfo = {
+							movedClientIds: [newSegment.clientId],
+							movedSeq: ranges.length > 0 ? Math.min(...ranges) : UnassignedSequenceNumber,
+							movedRangeExpansion,
+							movedSeqs: ranges.length > 0 ? ranges : [-1],
+							localMovedSeq:
+								(ranges.length === 0 || Math.min(...ranges) === -1) && localRanges.length > 0
+									? Math.min(...localRanges)
+									: undefined,
+							wasMovedOnInsert:
+								(ranges.length > 0 ? Math.min(...ranges) : UnassignedSequenceNumber) !==
+								UnassignedSequenceNumber,
+						};
+						markSegmentMoved(newSegment, moveInfo);
+
+						if (moveInfo.localMovedSeq !== undefined) {
+							const movedSegmentGroup = this.locallyMovedSegments.get(moveInfo.localMovedSeq);
+
+							assert(
+								movedSegmentGroup !== undefined,
+								0x86c /* expected segment group to exist */,
+							);
+
+							this.addToPendingList(newSegment, movedSegmentGroup, localSeq);
+						}
+
+						if (newSegment.parent) {
+							this.blockUpdatePathLengths(newSegment.parent, seq, clientId);
+						}
 					}
 				}
 			}
@@ -1640,7 +1736,6 @@ export class MergeTree {
 		pos: number | "start" | "end",
 		refSeq: number,
 		clientId: number,
-		localSeq?: number,
 	): void {
 		const splitNode = this.insertingWalk(
 			this.root,
@@ -1650,7 +1745,6 @@ export class MergeTree {
 			TreeMaintenanceSequenceNumber,
 			{ leaf: this.splitLeafSegment },
 			true,
-			localSeq,
 		);
 		this.updateRoot(splitNode);
 	}
@@ -1697,7 +1791,6 @@ export class MergeTree {
 		seq: number,
 		context: InsertContext,
 		isLastChildBlock: boolean = true,
-		localSeq?: number,
 	): MergeBlock | undefined {
 		let _pos: number;
 		if (pos === "start") {
@@ -1720,8 +1813,7 @@ export class MergeTree {
 			const isLastNonLeafBlock =
 				isLastChildBlock && !child.isLeaf() && childIndex === block.childCount - 1;
 			const len =
-				this.nodeLength(child, refSeq, clientId, localSeq) ??
-				(isLastChildBlock ? 0 : undefined);
+				this.nodeLength(child, refSeq, clientId) ?? (isLastChildBlock ? 0 : undefined);
 
 			if (len === undefined) {
 				// if the seg len is undefined, the segment
@@ -1947,8 +2039,8 @@ export class MergeTree {
 		const localSeq =
 			seq === UnassignedSequenceNumber ? ++this.collabWindow.localSeq : undefined;
 
-		this.ensureIntervalBoundary(startPos, refSeq, clientId, localSeq);
-		this.ensureIntervalBoundary(endPos, refSeq, clientId, localSeq);
+		this.ensureIntervalBoundary(startPos, refSeq, clientId);
+		this.ensureIntervalBoundary(endPos, refSeq, clientId);
 
 		let _overwrite = overwrite;
 		const localOverlapWithRefs: ISegment[] = [];
@@ -2100,14 +2192,14 @@ export class MergeTree {
 		opArgs: IMergeTreeDeltaOpArgs,
 	): void {
 		let _overwrite = overwrite;
-		const localSeq =
-			seq === UnassignedSequenceNumber ? ++this.collabWindow.localSeq : undefined;
-		this.ensureIntervalBoundary(start, refSeq, clientId, localSeq);
-		this.ensureIntervalBoundary(end, refSeq, clientId, localSeq);
+		this.ensureIntervalBoundary(start, refSeq, clientId);
+		this.ensureIntervalBoundary(end, refSeq, clientId);
 		// eslint-disable-next-line import/no-deprecated
 		let segmentGroup: SegmentGroup;
 		const removedSegments: IMergeTreeSegmentDelta[] = [];
 		const localOverlapWithRefs: ISegment[] = [];
+		const localSeq =
+			seq === UnassignedSequenceNumber ? ++this.collabWindow.localSeq : undefined;
 		const markRemoved = (
 			segment: ISegment,
 			pos: number,

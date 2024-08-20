@@ -57,6 +57,8 @@ export abstract class BaseSegment implements ISegment {
     // (undocumented)
     movedClientIds?: number[];
     // (undocumented)
+    movedRangeExpansion?: RangeExpansion | undefined;
+    // (undocumented)
     movedSeq?: number;
     // (undocumented)
     movedSeqs?: number[];
@@ -143,7 +145,7 @@ export class Client extends TypedEventEmitter<IClientEvents> {
     readonly logger: ITelemetryLoggerExt;
     // (undocumented)
     longClientId: string | undefined;
-    obliterateRangeLocal(start: number, end: number): IMergeTreeObliterateMsg;
+    obliterateRangeLocal(start: SequencePlace, end: SequencePlace): IMergeTreeObliterateMsg;
     peekPendingSegmentGroups(): SegmentGroup | undefined;
     // (undocumented)
     peekPendingSegmentGroups(count: number): SegmentGroup | SegmentGroup[] | undefined;
@@ -168,7 +170,7 @@ export class Client extends TypedEventEmitter<IClientEvents> {
     // (undocumented)
     walkSegments<TClientData>(handler: ISegmentAction<TClientData>, start: number | undefined, end: number | undefined, accum: TClientData, splitRange?: boolean): void;
     // (undocumented)
-    walkSegments<undefined>(handler: ISegmentAction<undefined>, start?: number, end?: number, accum?: undefined, splitRange?: boolean): void;
+    walkSegments<T>(handler: ISegmentAction<undefined>, start?: number, end?: number, accum?: undefined, splitRange?: boolean): void;
 }
 
 // @alpha @deprecated (undocumented)
@@ -359,6 +361,10 @@ export interface IMergeTreeMaintenanceCallbackArgs extends IMergeTreeDeltaCallba
 // @alpha @deprecated (undocumented)
 export interface IMergeTreeObliterateMsg extends IMergeTreeDelta {
     // (undocumented)
+    before1?: boolean;
+    // (undocumented)
+    before2?: boolean;
+    // (undocumented)
     pos1?: number;
     // (undocumented)
     pos2?: number;
@@ -377,6 +383,7 @@ export interface IMergeTreeOptions {
     // (undocumented)
     catchUpBlobName?: string;
     mergeTreeEnableObliterate?: boolean;
+    mergeTreeOptimizedObliterate?: boolean;
     mergeTreeReferencesCanSlideToEndpoint?: boolean;
     // (undocumented)
     mergeTreeSnapshotChunkSize?: number;

@@ -699,7 +699,9 @@ export abstract class BaseSegment implements ISegment {
 		}
 
 		if (this.movedRangeExpansion !== undefined) {
+			// eslint-disable-next-line no-bitwise
 			leafSegment.movedRangeExpansion = this.movedRangeExpansion | RangeExpansion.Near;
+			// eslint-disable-next-line no-bitwise
 			this.movedRangeExpansion |= RangeExpansion.Far;
 		}
 

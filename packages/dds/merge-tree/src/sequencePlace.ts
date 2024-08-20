@@ -60,7 +60,7 @@ export function normalizePlace(place: SequencePlace): InteriorSequencePlace {
 		return { pos: place, side: Side.Before };
 	}
 	if (place === "start") {
-		return { pos: -1, side: Side.After };
+		return { pos: 0, side: Side.After };
 	}
 	if (place === "end") {
 		return { pos: -1, side: Side.Before };

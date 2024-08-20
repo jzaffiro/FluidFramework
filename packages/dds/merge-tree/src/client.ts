@@ -75,12 +75,12 @@ import {
 } from "./ops.js";
 import { PropertySet, createMap } from "./properties.js";
 import { DetachedReferencePosition, ReferencePosition } from "./referencePositions.js";
+import { Side, type SequencePlace } from "./sequencePlace.js";
 import { SnapshotLoader } from "./snapshotLoader.js";
 import { SnapshotV1 } from "./snapshotV1.js";
 import { SnapshotLegacy } from "./snapshotlegacy.js";
 // eslint-disable-next-line import/no-deprecated
 import { IMergeTreeTextHelper } from "./textSegment.js";
-import { Side, type SequencePlace } from "./sequencePlace.js";
 
 type IMergeTreeDeltaRemoteOpArgs = Omit<IMergeTreeDeltaOpArgs, "sequencedMessage"> &
 	Required<Pick<IMergeTreeDeltaOpArgs, "sequencedMessage">>;
@@ -264,10 +264,10 @@ export class Client extends TypedEventEmitter<IClientEvents> {
 	 * @param start - The inclusive start of the range to obliterate
 	 * @param end - The exclusive end of the range to obliterate
 	 */
-	// eslint-disable-next-line import/no-deprecated
 	public obliterateRangeLocal(
 		start: SequencePlace,
 		end: SequencePlace,
+		// eslint-disable-next-line import/no-deprecated
 	): IMergeTreeObliterateMsg {
 		const obliterateOp = createObliterateRangeOp(start, end);
 		this.applyObliterateRangeOp({ op: obliterateOp });
@@ -316,7 +316,7 @@ export class Client extends TypedEventEmitter<IClientEvents> {
 		accum: TClientData,
 		splitRange?: boolean,
 	): void;
-	public walkSegments<undefined>(
+	public walkSegments<T>(
 		handler: ISegmentAction<undefined>,
 		start?: number,
 		end?: number,
@@ -628,6 +628,7 @@ export class Client extends TypedEventEmitter<IClientEvents> {
 				(op.type !== MergeTreeDeltaType.INSERT || end !== undefined) &&
 				(end === undefined ||
 					end < start! ||
+					// eslint-disable-next-line import/no-deprecated
 					(end === start && (op as IMergeTreeObliterateMsg).before1 !== true))
 			) {
 				invalidPositions.push("end");
