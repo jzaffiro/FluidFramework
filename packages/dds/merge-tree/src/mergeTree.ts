@@ -1612,12 +1612,11 @@ export class MergeTree {
 						}
 					}
 				} else {
-					/**
-					 * slow implementation of obliterate with endpoint expansion
-					 */
 					prevSegment = undefined;
 					let ranges: number[] = [];
 					let localRanges: number[] = [];
+					const finishedRanges: number[] = [];
+					const finishedLocalRanges: number[] = [];
 					let nearNeighbor: ISegment | undefined;
 					let farNeighbor: ISegment | undefined;
 					/**
@@ -1639,6 +1638,11 @@ export class MergeTree {
 						if (seg.localMovedSeq !== undefined && !localRanges.includes(seg.localMovedSeq)) {
 							localRanges.push(seg.localMovedSeq);
 						}
+						// Ensure that none of the sequence numbers of a range that has ended are seen on a later segment
+						for (const finishedSeq of finishedRanges) {
+							assert(seg.seq !== finishedSeq, "should not see the sequence of a finished range on a later segment")
+						}
+						// Ensure that the segment has a nonzero length (has not been removed or obliterated) at the time of the obliterate
 						if (
 							seg.seq !== undefined &&
 							newSegment.seq !== undefined &&
@@ -1657,11 +1661,6 @@ export class MergeTree {
 						if (seg === newSegment) {
 							nearNeighbor = prevSegment;
 						}
-						/**
-						 * when checking for continuous obliterate ranges, need to check if segment has length \> 0 at seq before obliterate seq
-						 * also need to check if the segment has been removed or moved before the obliterate seq, then it wont be included in walk
-						 */
-
 						for (const targetSeq of ranges) {
 							if (
 								seg !== newSegment &&
@@ -1669,6 +1668,7 @@ export class MergeTree {
 								!seg.movedSeqs?.includes(targetSeq)
 							) {
 								ranges = ranges.filter((seqNum) => seqNum !== targetSeq);
+								finishedRanges.push(targetSeq);
 							}
 						}
 						for (const targetLocalSeq of localRanges) {
@@ -1677,8 +1677,8 @@ export class MergeTree {
 								prevSegment !== newSegment &&
 								seg.localMovedSeq !== undefined
 							) {
-								// have hit the end of the range with start at targetLocalSeq
 								localRanges = localRanges.filter((seqNum) => seqNum !== targetLocalSeq);
+								finishedLocalRanges.push(targetLocalSeq);
 							}
 						}
 						prevSegment = seg;
@@ -1713,7 +1713,7 @@ export class MergeTree {
 
 							assert(
 								movedSegmentGroup !== undefined,
-								0x86c /* expected segment group to exist */,
+								"expected segment group to exist",
 							);
 
 							this.addToPendingList(newSegment, movedSegmentGroup, localSeq);
