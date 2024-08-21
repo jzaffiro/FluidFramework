@@ -1620,8 +1620,16 @@ export class MergeTree {
 					let localRanges: number[] = [];
 					let nearNeighbor: ISegment | undefined;
 					let farNeighbor: ISegment | undefined;
-					// document loop invariants - things that should be true at the start of each iteration
+					/**
+					 * Traverses the tree to determine which obliterates are valid at the position of
+					 * the inserted segment.
+					 * @param ranges - The list of sequence numbers, excluding duplicates and {@link UnassignedSequenceNumber}, at which a certain segment was obliterated
+					 * @param localRanges - The list of local sequence numbers at which a certain segment was obliterated
+					 * The loop will exit when newSegment is found, storing the previous and next segments in the merge tree.
+					 */
 					walkAllChildSegments(this.root, (seg) => {
+						// Add the current segment's movedSeqs and localMovedSeqs, if applicable, to the
+						// list of in-flight obliterates
 						if (seg.movedSeqs !== undefined) {
 							const newMovedSeqs = seg.movedSeqs.filter(
 								(seqNum) => !ranges.includes(seqNum) && seqNum !== UnassignedSequenceNumber,
@@ -1631,7 +1639,17 @@ export class MergeTree {
 						if (seg.localMovedSeq !== undefined && !localRanges.includes(seg.localMovedSeq)) {
 							localRanges.push(seg.localMovedSeq);
 						}
-
+						if (
+							seg.seq !== undefined &&
+							newSegment.seq !== undefined &&
+							seg.seq < newSegment.seq
+						) {
+							assert(
+								seg.cachedLength > 0,
+								"expected segment to have length > 0 before obliterate",
+							);
+						}
+						// If the new segment is found, store the previous and next segments, then exit the walk
 						if (nearNeighbor !== undefined) {
 							farNeighbor = seg;
 							return LeafAction.Exit;
@@ -1660,9 +1678,7 @@ export class MergeTree {
 								seg.localMovedSeq !== undefined
 							) {
 								// have hit the end of the range with start at targetLocalSeq
-								localRanges = localRanges.filter(
-									(seqNum) => seqNum !== targetLocalSeq,
-								);
+								localRanges = localRanges.filter((seqNum) => seqNum !== targetLocalSeq);
 							}
 						}
 						prevSegment = seg;
