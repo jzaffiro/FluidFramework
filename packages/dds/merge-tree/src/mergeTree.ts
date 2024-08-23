@@ -1467,6 +1467,29 @@ export class MergeTree {
 			return segmentChanges;
 		};
 
+		const getMovesInPerspective = (
+			nearNeighbor: ISegment | undefined,
+			farNeighbor: ISegment | undefined,
+		): { nearMoves: number[] | undefined; farMoves: number[] | undefined } => {
+			let nearMoves: number[] | undefined;
+			let farMoves: number[] | undefined;
+			if (nearNeighbor?.movedSeqs !== undefined) {
+				nearMoves = nearNeighbor.movedSeqs?.filter(
+					(nearMovedSeq, index) =>
+						// remove non-null assertions
+						nearNeighbor.movedClientIds![index] !== this.collabWindow.clientId && nearMovedSeq !== -1 && nearMovedSeq > refSeq ,
+				);
+			}
+			if (farNeighbor?.movedSeqs !== undefined) {
+				farMoves = farNeighbor.movedSeqs?.filter(
+					(farMovedSeq, index) =>
+						// remove non-null assertions
+						farNeighbor.movedClientIds![index] !== this.collabWindow.clientId && farMovedSeq !== -1 && farMovedSeq > refSeq ,
+				);
+			}
+			return { nearMoves, farMoves };
+		};
+
 		// TODO: build tree from segs and insert all at once
 		let insertPos = pos;
 		// const perspective = new PerspectiveImpl(this, { refSeq, localSeq });
@@ -1638,11 +1661,13 @@ export class MergeTree {
 						if (seg.localMovedSeq !== undefined && !localRanges.includes(seg.localMovedSeq)) {
 							localRanges.push(seg.localMovedSeq);
 						}
-						// Ensure that none of the sequence numbers of a range that has ended are seen on a later segment
+						// Ensure that none of the sequence numbers of any range that has ended are seen on a later segment
 						for (const finishedSeq of finishedRanges) {
-							assert(seg.seq !== finishedSeq, "should not see the sequence of a finished range on a later segment")
+							assert(
+								seg.seq !== finishedSeq,
+								"should not see the sequence of a finished range on a later segment",
+							);
 						}
-						// Ensure that the segment has a nonzero length (has not been removed or obliterated) at the time of the obliterate
 						if (
 							seg.seq !== undefined &&
 							newSegment.seq !== undefined &&
@@ -1652,14 +1677,6 @@ export class MergeTree {
 								seg.cachedLength > 0,
 								"expected segment to have length > 0 before obliterate",
 							);
-						}
-						// If the new segment is found, store the previous and next segments, then exit the walk
-						if (nearNeighbor !== undefined) {
-							farNeighbor = seg;
-							return LeafAction.Exit;
-						}
-						if (seg === newSegment) {
-							nearNeighbor = prevSegment;
 						}
 						for (const targetSeq of ranges) {
 							if (
@@ -1675,16 +1692,32 @@ export class MergeTree {
 							if (
 								seg !== newSegment &&
 								prevSegment !== newSegment &&
-								seg.localMovedSeq !== undefined
+								seg.localMovedSeq === undefined
 							) {
 								localRanges = localRanges.filter((seqNum) => seqNum !== targetLocalSeq);
 								finishedLocalRanges.push(targetLocalSeq);
 							}
 						}
+						// If the new segment is found, store the previous and next segments, then exit the walk
+						if (nearNeighbor !== undefined) {
+							farNeighbor = seg;
+							return LeafAction.Exit;
+						}
+						if (seg === newSegment) {
+							nearNeighbor = prevSegment;
+						}
 						prevSegment = seg;
 					});
-
-					if (nearNeighbor?.movedSeq !== undefined || farNeighbor?.movedSeq !== undefined) {
+					// write function that takes the neighbors and returns the moves that affected the new segment
+					// has to indicate whether or not the segment is the new endpoint of the range
+					// if the refseq is less than the movedseq, we dont know about the obliterate from that perspective (if refseq is greater than the moved seq, then we do know about it and the segment should not be obliterated)
+					const { nearMoves, farMoves } = getMovesInPerspective(nearNeighbor, farNeighbor);
+					if (
+						(nearNeighbor?.movedSeq !== undefined || farNeighbor?.movedSeq !== undefined) &&
+						newSegment.seq !== UnassignedSequenceNumber
+						&&
+						(nearMoves?.includes(newSegment.seq) ?? farMoves?.includes(newSegment.seq))
+					) {
 						// Look on both sides of the new segment to determine the expansion
 						const movedRangeExpansion =
 							// The far bit of the previous segment
@@ -1711,10 +1744,7 @@ export class MergeTree {
 						if (moveInfo.localMovedSeq !== undefined) {
 							const movedSegmentGroup = this.locallyMovedSegments.get(moveInfo.localMovedSeq);
 
-							assert(
-								movedSegmentGroup !== undefined,
-								"expected segment group to exist",
-							);
+							assert(movedSegmentGroup !== undefined, "expected segment group to exist");
 
 							this.addToPendingList(newSegment, movedSegmentGroup, localSeq);
 						}
@@ -2051,6 +2081,7 @@ export class MergeTree {
 		const endPlace = normalizePlace(end);
 		// startPos and endPos are the before-sided extents of the range to obliterate
 		const startPos = startPlace.side === Side.Before ? startPlace.pos : startPlace.pos + 1;
+		// this seems off - if side is after the endpoint, we only want to include things at the given pos
 		const endPos = endPlace.side === Side.Before ? endPlace.pos : endPlace.pos + 1;
 		const localSeq =
 			seq === UnassignedSequenceNumber ? ++this.collabWindow.localSeq : undefined;
