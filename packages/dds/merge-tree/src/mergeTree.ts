@@ -1536,26 +1536,40 @@ export class MergeTree {
 				const starts = new Set<ObliterateInfo>();
 				const overlapping = new Set<ObliterateInfo>();
 				const findLeftMovedSegment = (seg: ISegment): boolean => {
-					seg.localRefs?.walkReferences(
-						(ref) => {
-							const obliterate = ref.properties?.obliterate as ObliterateInfo | undefined;
-							if (obliterate?.start === ref) {
-								starts.add(obliterate);
-							}
-						},
-						undefined,
-						false,
-					);
+					if (
+						(seg.movedSeq !== undefined &&
+							seg.movedSeq !== UnassignedSequenceNumber &&
+							this.moveSeqs.includes(seg.movedSeq)) ||
+						(seg.localMovedSeq !== undefined && this.localMoveSeqs.has(seg.localMovedSeq))
+					) {
+						seg.localRefs?.walkReferences(
+							(ref) => {
+								const obliterate = ref.properties?.obliterate as ObliterateInfo | undefined;
+								if (obliterate?.start === ref) {
+									starts.add(obliterate);
+								}
+							},
+							undefined,
+							false,
+						);
+					}
 					return true;
 				};
 
 				const findRightMovedSegment = (seg: ISegment): boolean => {
-					seg.localRefs?.walkReferences((ref) => {
-						const obliterate = ref.properties?.obliterate as ObliterateInfo | undefined;
-						if (obliterate?.end === ref && starts.has(obliterate)) {
-							overlapping.add(obliterate);
-						}
-					});
+					if (
+						(seg.movedSeq !== undefined &&
+							seg.movedSeq !== UnassignedSequenceNumber &&
+							this.moveSeqs.includes(seg.movedSeq)) ||
+						(seg.localMovedSeq !== undefined && this.localMoveSeqs.has(seg.localMovedSeq))
+					) {
+						seg.localRefs?.walkReferences((ref) => {
+							const obliterate = ref.properties?.obliterate as ObliterateInfo | undefined;
+							if (obliterate?.end === ref && starts.has(obliterate)) {
+								overlapping.add(obliterate);
+							}
+						});
+					}
 					return true;
 				};
 
