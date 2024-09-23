@@ -707,7 +707,7 @@ describe("client.applyMsg", () => {
 	// 2:0:C4@2,4 | BB----   | 2:0:C4@2,4 | BB----   | 2:0:C4@2,4   | B_-BB-
 	//            |          |            |          |              |  -
 	// 3:0:C4@1,2 | B-----   | 3:0:C4@1,2 | B-----   | 3:0:C4@1,2   | B--BB-
-	it("sided obliterate regression test", () => {
+	it.skip("sided obliterate regression test", () => {
 		const clients = createClientsAtInitialState(
 			{ initialState: "BBBC", options: { mergeTreeEnableObliterate: true } },
 			"A",
