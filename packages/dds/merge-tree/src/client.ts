@@ -628,7 +628,6 @@ export class Client extends TypedEventEmitter<IClientEvents> {
 				invalidPositions.push("start");
 			}
 			// Validate end if not insert, or insert has end
-			//
 			if (
 				(op.type !== MergeTreeDeltaType.INSERT || end !== undefined) &&
 				(end === undefined ||
@@ -786,6 +785,9 @@ export class Client extends TypedEventEmitter<IClientEvents> {
 			segments: [],
 			localSeq: segmentGroup.localSeq,
 			refSeq: this.getCollabWindow().currentSeq,
+			obliterateInfo: {
+				...segmentGroup.obliterateInfo!,
+			},
 			obliterateInfo: {
 				...segmentGroup.obliterateInfo!,
 			},
