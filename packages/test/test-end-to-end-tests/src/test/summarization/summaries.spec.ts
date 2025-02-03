@@ -7,32 +7,36 @@ import { strict as assert } from "assert";
 
 import { bufferToString } from "@fluid-internal/client-utils";
 import {
-	ITestDataObject,
+	type ITestDataObject,
 	TestDataObjectType,
 	describeCompat,
 	itExpects,
 } from "@fluid-private/test-version-utils";
-import { IContainer } from "@fluidframework/container-definitions/internal";
-import {
+import type { IContainer } from "@fluidframework/container-definitions/internal";
+import type {
 	ContainerRuntime,
 	ISummarizeResults,
-	type ISummarizer,
+	ISummarizer,
 } from "@fluidframework/container-runtime/internal";
-import { ISummaryBlob, ISummaryTree, SummaryType } from "@fluidframework/driver-definitions";
-import { ISummaryContext } from "@fluidframework/driver-definitions/internal";
+import {
+	type ISummaryBlob,
+	type ISummaryTree,
+	SummaryType,
+} from "@fluidframework/driver-definitions";
+import type { ISummaryContext } from "@fluidframework/driver-definitions/internal";
 import {
 	FlushMode,
-	IFluidDataStoreFactory,
+	type IFluidDataStoreFactory,
 	channelsTreeName,
 } from "@fluidframework/runtime-definitions/internal";
 import type { SharedString } from "@fluidframework/sequence/internal";
 import { MockLogger, createChildLogger } from "@fluidframework/telemetry-utils/internal";
 import {
-	ChannelFactoryRegistry,
+	type ChannelFactoryRegistry,
 	DataObjectFactoryType,
-	ITestContainerConfig,
-	ITestFluidObject,
-	ITestObjectProvider,
+	type ITestContainerConfig,
+	type ITestFluidObject,
+	type ITestObjectProvider,
 	createSummarizer,
 	createSummarizerFromFactory,
 	getContainerEntryPointBackCompat,
@@ -40,7 +44,7 @@ import {
 	timeoutPromise,
 	waitForContainerConnection,
 } from "@fluidframework/test-utils/internal";
-import { SinonSandbox, createSandbox } from "sinon";
+import { type SinonSandbox, createSandbox } from "sinon";
 
 import { TestPersistedCache } from "../../testPersistedCache.js";
 
@@ -408,7 +412,8 @@ describeCompat("Summaries", "NoCompat", (getTestObjectProvider, apis) => {
 		});
 	}
 
-	it("Can summarize after hitting nack on unsummarized ops", async function () {
+	// AB#29483: This test is flaky on local server.
+	it.skip("Can summarize after hitting nack on unsummarized ops", async function () {
 		if (provider.driver.type !== "local") {
 			this.skip();
 		}
@@ -489,7 +494,7 @@ describeCompat("Summaries", "NoCompat", (getTestObjectProvider, apis) => {
 				summarizeReason: "lastSummary",
 			},
 		],
-		async function () {
+		async () => {
 			const mainContainer = await provider.makeTestContainer(testContainerConfig);
 			const { summarizer } = await createSummarizer(provider, mainContainer, {
 				runtimeOptions: {
@@ -537,7 +542,7 @@ describeCompat("Summaries 2", "NoCompat", (getTestObjectProvider) => {
 	});
 
 	const getTestFn =
-		(injectFailure: boolean = false) =>
+		(injectFailure = false) =>
 		async () => {
 			const mockLogger = new MockLogger();
 			const container = await provider.makeTestContainer({
