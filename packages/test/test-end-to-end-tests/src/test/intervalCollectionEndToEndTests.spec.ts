@@ -10,6 +10,7 @@ import { IHostLoader } from "@fluidframework/container-definitions/internal";
 import { IContainerExperimental } from "@fluidframework/container-loader/internal";
 import { DefaultSummaryConfiguration } from "@fluidframework/container-runtime/internal";
 import { ConfigTypes, IConfigProviderBase } from "@fluidframework/core-interfaces";
+import { Side } from "@fluidframework/merge-tree/internal";
 import { toDeltaManagerInternal } from "@fluidframework/runtime-utils/internal";
 import type {
 	ISequenceIntervalCollection,
@@ -24,6 +25,7 @@ import {
 	toIDeltaManagerFull,
 	getContainerEntryPointBackCompat,
 	waitForContainerConnection,
+	TestFluidObjectFactory,
 } from "@fluidframework/test-utils/internal";
 
 const stringId = "sharedStringKey";
@@ -58,7 +60,7 @@ const assertIntervals = (
 	assert.deepEqual(actualPos, expected, "intervals are not as expected");
 };
 
-describeCompat(
+describeCompat.only(
 	"IntervalCollection with stashed ops",
 	"NoCompat",
 	(getTestObjectProvider, apis) => {
@@ -89,6 +91,7 @@ describeCompat(
 			loaderProps: {
 				configProvider: configProvider({
 					"Fluid.Container.enableOfflineLoad": true,
+					"Fluid.Sequence.intervalStickinessEnabled": true,
 				}),
 			},
 		};
@@ -104,7 +107,7 @@ describeCompat(
 		let loader: IHostLoader;
 		let url;
 
-		beforeEach(async () => {
+		it("doesn't resend successful op", async () => {
 			provider = getTestObjectProvider();
 			container1 = await provider.makeTestContainer(testContainerConfig);
 			dataObject1 = await getContainerEntryPointBackCompat<ITestFluidObject>(container1);
@@ -113,9 +116,7 @@ describeCompat(
 			collection1 = sharedString1.getIntervalCollection(collectionId);
 			loader = provider.makeTestLoader(testContainerConfig);
 			url = await container1.getAbsoluteUrl("");
-		});
 
-		it("doesn't resend successful op", async () => {
 			// add an interval
 			const id = collection1.add({ start: 4, end: 7 }).getIntervalId();
 
@@ -177,6 +178,65 @@ describeCompat(
 
 			assertIntervals(sharedString1, collection1, [{ start: 2, end: 9 }]);
 			assertIntervals(sharedString2, collection2, [{ start: 2, end: 9 }]);
+		});
+
+		it("verify interval positions when loaded from snapshot", async () => {
+			const { ContainerRuntimeFactoryWithDefaultDataStore } = apis.containerRuntime;
+			const defaultFactory = new TestFluidObjectFactory([
+				[stringId, SharedString.getFactory()],
+			]);
+
+			const runtimeFactory = new ContainerRuntimeFactoryWithDefaultDataStore({
+				defaultFactory,
+				registryEntries: [[defaultFactory.type, Promise.resolve(defaultFactory)]],
+			});
+
+			const testContainer = await provider.createDetachedContainer(runtimeFactory, {
+				...testContainerConfig.loaderProps,
+				urlResolver: provider.urlResolver,
+			});
+			const dataObject =
+				await getContainerEntryPointBackCompat<ITestFluidObject>(testContainer);
+			const sharedString = await dataObject.getSharedObject<SharedString>(stringId);
+			sharedString.insertText(0, "Interval test!");
+			const collection = sharedString.getIntervalCollection(collectionId);
+			// both start and end are at 0, side.before
+			const testInterval = collection.add({ start: "start", end: "start" });
+			const id = testInterval.getIntervalId();
+
+			// verify positions in detached state
+			assertIntervals(sharedString, collection, [{ start: 0, end: 0 }], false);
+			assert.strictEqual(testInterval.startSide, Side.Before);
+			assert.strictEqual(testInterval.endSide, Side.Before);
+
+			// serialize the initial container and attach
+			const snapshot = testContainer.serialize();
+			const request = provider.driver.createCreateNewRequest("testDoc");
+			await testContainer.attach(request);
+
+			// create a loader with the same runtime factory as the first container
+			const loader2 = provider.createLoader([[provider.defaultCodeDetails, runtimeFactory]], {
+				...testContainerConfig.loaderProps,
+				urlResolver: provider.urlResolver,
+			});
+
+			// load second container from first's snapshot
+			const testContainer2 = await loader2.rehydrateDetachedContainerFromSnapshot(snapshot);
+			await testContainer2.attach(request);
+
+			await provider.ensureSynchronized();
+
+			const testDataObject2 =
+				await getContainerEntryPointBackCompat<ITestFluidObject>(testContainer2);
+			const testSharedString2 = await testDataObject2.getSharedObject<SharedString>(stringId);
+			const testCollection2 = testSharedString2.getIntervalCollection(collectionId);
+			const testInterval2 = testCollection2.getIntervalById(id);
+
+			// verify positions in second container
+			assert(testInterval2 !== undefined);
+			assertIntervals(testSharedString2, testCollection2, [{ start: 0, end: 0 }], false);
+			assert.strictEqual(testInterval2.startSide, Side.Before);
+			assert.strictEqual(testInterval2.endSide, Side.Before);
 		});
 	},
 );
