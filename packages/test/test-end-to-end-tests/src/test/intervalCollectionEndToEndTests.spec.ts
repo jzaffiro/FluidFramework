@@ -208,11 +208,20 @@ describeCompat.only(
 			assertIntervals(sharedString, collection, [{ start: 0, end: 0 }], false);
 			assert.strictEqual(testInterval.startSide, Side.Before);
 			assert.strictEqual(testInterval.endSide, Side.Before);
+			assert.strictEqual(testInterval.start.getSegment()?.type, "StartOfTreeSegment");
+			assert.strictEqual(testInterval.end.getSegment()?.type, "StartOfTreeSegment");
 
 			// serialize the initial container and attach
 			const snapshot = testContainer.serialize();
 			const request = provider.driver.createCreateNewRequest("testDoc");
 			await testContainer.attach(request);
+
+			// verify positions in detached state
+			assertIntervals(sharedString, collection, [{ start: 0, end: 0 }], false);
+			assert.strictEqual(testInterval.startSide, Side.Before);
+			assert.strictEqual(testInterval.endSide, Side.Before);
+			assert.strictEqual(testInterval.start.getSegment()?.type, "StartOfTreeSegment");
+			assert.strictEqual(testInterval.end.getSegment()?.type, "StartOfTreeSegment");
 
 			// create a loader with the same runtime factory as the first container
 			const loader2 = provider.createLoader([[provider.defaultCodeDetails, runtimeFactory]], {
@@ -237,6 +246,8 @@ describeCompat.only(
 			assertIntervals(testSharedString2, testCollection2, [{ start: 0, end: 0 }], false);
 			assert.strictEqual(testInterval2.startSide, Side.Before);
 			assert.strictEqual(testInterval2.endSide, Side.Before);
+			assert.strictEqual(testInterval2.start.getSegment()?.type, "StartOfTreeSegment");
+			assert.strictEqual(testInterval2.end.getSegment()?.type, "StartOfTreeSegment");
 		});
 	},
 );
